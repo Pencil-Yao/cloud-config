@@ -34,6 +34,7 @@ use crate::{
     init_node::{execute_init_node, InitNodeOpts},
     set_admin::{execute_set_admin, SetAdminOpts},
     set_nodelist::{execute_set_nodelist, SetNodeListOpts},
+    set_stage::{execute_set_stage, SetStageOpts},
     set_validators::{execute_set_validators, SetValidatorsOpts},
     sign_csr::{execute_sign_csr, SignCSROpts},
     update_node::{execute_update_node, UpdateNodeOpts},
@@ -252,7 +253,7 @@ fn generate_new_node_config(
     } = old_config;
     let node_addr = remove_0x(&node_addr).to_string();
 
-    let (key_id, account_addr) = execute_import_account(ImportAccountOpts {
+    let (key_id, account_addr, _) = execute_import_account(ImportAccountOpts {
         chain_name: chain_name.into(),
         config_dir: config_dir.into(),
         kms_password: kms_password.into(),
@@ -307,6 +308,7 @@ fn generate_new_node_config(
         config_name: "config.toml".into(),
         domain: domain.into(),
         is_stdout: false,
+        is_old: false,
     })
     .unwrap();
 
@@ -434,6 +436,13 @@ where
     })
     .unwrap();
 
+    execute_set_stage(SetStageOpts {
+        chain_name: chain_name.into(),
+        config_dir: config_dir.into(),
+        stage: "finalize".into(),
+    })
+    .unwrap();
+
     for (i, (old_config, kms_password)) in
         node_configs.into_iter().zip(kms_password_list).enumerate()
     {
@@ -498,7 +507,7 @@ pub fn execute_migrate(opts: MigrateOpts) -> Result<()> {
         .node_list
         .split(',')
         .map(|s| {
-            let (ip, port) = s.split_once(":").context("cannot parse ip and port")?;
+            let (ip, port) = s.split_once(':').context("cannot parse ip and port")?;
             Ok((ip.to_string(), port.parse()?))
         })
         .collect::<Result<Vec<(String, u16)>>>()

@@ -14,7 +14,7 @@
 
 use crate::append_node::{execute_append_node, AppendNodeOpts};
 use crate::append_validator::{execute_append_validator, AppendValidatorOpts};
-use crate::constant::{CHAIN_CONFIG_FILE, CONSENSUS_BFT, KMS_ETH, NETWORK_TLS};
+use crate::constant::{CHAIN_CONFIG_FILE, CONSENSUS_RAFT, KMS_ETH, NETWORK_P2P, NETWORK_TLS};
 use crate::create_ca::{execute_create_ca, CreateCAOpts};
 use crate::create_csr::{execute_create_csr, CreateCSROpts};
 use crate::delete_node::{delete_node_folders, execute_delete_node, DeleteNodeOpts};
@@ -24,6 +24,7 @@ use crate::init_chain_config::{execute_init_chain_config, InitChainConfigOpts};
 use crate::init_node::{execute_init_node, InitNodeOpts};
 use crate::new_account::{execute_new_account, NewAccountOpts};
 use crate::set_admin::{execute_set_admin, SetAdminOpts};
+use crate::set_stage::{execute_set_stage, SetStageOpts};
 use crate::sign_csr::{execute_sign_csr, SignCSROpts};
 use crate::update_node::{execute_update_node, UpdateNodeOpts};
 use crate::util::{find_micro_service, read_chain_config};
@@ -77,11 +78,11 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
     let mut init_chain_config_opts = InitChainConfigOpts::parse_from(vec![""]);
     init_chain_config_opts.chain_name = opts.chain_name.clone();
     init_chain_config_opts.config_dir = opts.config_dir.clone();
-    if is_tls {
-        init_chain_config_opts.network_image = NETWORK_TLS.to_string();
+    if !is_tls {
+        init_chain_config_opts.network_image = NETWORK_P2P.to_string();
     }
-    if opts.is_bft {
-        init_chain_config_opts.consensus_image = CONSENSUS_BFT.to_string();
+    if !opts.is_bft {
+        init_chain_config_opts.consensus_image = CONSENSUS_RAFT.to_string();
     }
     if opts.is_eth {
         init_chain_config_opts.kms_image = KMS_ETH.to_string();
@@ -89,7 +90,7 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
     execute_init_chain_config(init_chain_config_opts).unwrap();
 
     // gen admin addr and set admin
-    let (_admin_key_id, admin_addr) = execute_new_account(NewAccountOpts {
+    let (_admin_key_id, admin_addr, _) = execute_new_account(NewAccountOpts {
         chain_name: opts.chain_name.clone(),
         config_dir: opts.config_dir.clone(),
         kms_password: "123456".to_string(),
@@ -105,7 +106,7 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
     // gen validator addr and append validator
     let mut node_accounts = Vec::new();
     for _ in 0..peers_count {
-        let (key_id, addr) = execute_new_account(NewAccountOpts {
+        let (key_id, addr, validator_addr) = execute_new_account(NewAccountOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
             kms_password: "123456".to_string(),
@@ -114,7 +115,7 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
         execute_append_validator(AppendValidatorOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
-            validator: addr.clone(),
+            validator: validator_addr.clone(),
         })
         .unwrap();
         node_accounts.push((key_id, addr));
@@ -156,6 +157,13 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
         }
     }
 
+    execute_set_stage(SetStageOpts {
+        chain_name: opts.chain_name.clone(),
+        config_dir: opts.config_dir.clone(),
+        stage: "finalize".to_string(),
+    })
+    .unwrap();
+
     #[allow(clippy::needless_range_loop)]
     for i in 0..peers_count {
         let network_port = (50000 + i * 1000) as u16;
@@ -188,6 +196,7 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
             domain,
             is_stdout: false,
             config_name: "config.toml".to_string(),
+            is_old: false,
         })
         .unwrap();
     }
@@ -220,7 +229,7 @@ pub fn execute_append_dev(opts: AppendDevOpts) -> Result<(), Error> {
     let new_node_id = peers_count;
 
     // create account for new node
-    let (key_id, addr) = execute_new_account(NewAccountOpts {
+    let (key_id, addr, _) = execute_new_account(NewAccountOpts {
         chain_name: opts.chain_name.clone(),
         config_dir: opts.config_dir.clone(),
         kms_password: "123456".to_string(),
@@ -264,6 +273,7 @@ pub fn execute_append_dev(opts: AppendDevOpts) -> Result<(), Error> {
             domain,
             is_stdout: false,
             config_name: "config.toml".to_string(),
+            is_old: true,
         })
         .unwrap();
     }
@@ -298,6 +308,7 @@ pub fn execute_append_dev(opts: AppendDevOpts) -> Result<(), Error> {
         domain,
         is_stdout: false,
         config_name: "config.toml".to_string(),
+        is_old: false,
     })
     .unwrap();
 
@@ -343,6 +354,7 @@ pub fn execute_delete_dev(opts: DeleteDevOpts) -> Result<(), Error> {
             domain,
             is_stdout: false,
             config_name: "config.toml".to_string(),
+            is_old: true,
         })
         .unwrap();
     }
@@ -353,37 +365,45 @@ pub fn execute_delete_dev(opts: DeleteDevOpts) -> Result<(), Error> {
 #[cfg(test)]
 mod dev_test {
     use super::*;
+    use crate::util::rand_string;
 
     #[test]
-    fn create_test() {
+    fn dev_test() {
+        let name = rand_string();
+        let name1 = rand_string();
         execute_create_dev(CreateDevOpts {
-            chain_name: "test-chain".to_string(),
-            config_dir: ".".to_string(),
+            chain_name: name.clone(),
+            config_dir: "/tmp".to_string(),
             peers_count: 2,
             log_level: "info".to_string(),
             is_tls: false,
             is_bft: false,
+            is_eth: false,
+        })
+        .unwrap();
+
+        execute_create_dev(CreateDevOpts {
+            chain_name: name1,
+            config_dir: "/tmp".to_string(),
+            peers_count: 2,
+            log_level: "info".to_string(),
+            is_tls: true,
+            is_bft: true,
             is_eth: true,
         })
-        .unwrap()
-    }
+        .unwrap();
 
-    #[test]
-    fn append_test() {
         execute_append_dev(AppendDevOpts {
-            chain_name: "test-chain".to_string(),
-            config_dir: ".".to_string(),
+            chain_name: name.clone(),
+            config_dir: "/tmp".to_string(),
             log_level: "info".to_string(),
         })
-        .unwrap()
-    }
+        .unwrap();
 
-    #[test]
-    fn delete_test() {
         execute_delete_dev(DeleteDevOpts {
-            chain_name: "test-chain".to_string(),
-            config_dir: ".".to_string(),
+            chain_name: name,
+            config_dir: "/tmp".to_string(),
         })
-        .unwrap()
+        .unwrap();
     }
 }

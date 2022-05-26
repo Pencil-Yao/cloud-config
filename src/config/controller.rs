@@ -38,6 +38,8 @@ pub struct ControllerConfig {
     pub node_address: String,
 
     pub package_limit: u64,
+
+    pub validator_address_len: u32,
 }
 
 impl TomlWriter for ControllerConfig {
@@ -195,8 +197,6 @@ mod controller_test {
 
     #[test]
     fn basic_test() {
-        let _ = std::fs::remove_file("example/config.toml");
-
         let config = ControllerConfig {
             network_port: 51230,
             consensus_port: 51231,
@@ -207,6 +207,7 @@ mod controller_test {
             key_id: 1,
             node_address: "0xe7b14f079c1db897568883f0323af5887c2feebb".into(),
             package_limit: 30000,
+            validator_address_len: 20,
         };
 
         config.write("example");
@@ -218,5 +219,7 @@ mod controller_test {
         };
 
         genesis.write("example");
+
+        let _ = std::fs::remove_file("example");
     }
 }

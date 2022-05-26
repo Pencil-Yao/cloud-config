@@ -12,45 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::constant::{CONSENSUS, CONSENSUS_RAFT};
+use crate::constant::{CONSENSUS, CONSENSUS_OVERLORD};
 use crate::traits::{TomlWriter, YmlWriter};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Clone, Deserialize)]
-pub struct Consensus {
-    pub network_port: u16,
-
+pub struct ConsensusOverlord {
     pub controller_port: u16,
 
-    pub node_addr: String,
+    pub consensus_port: u16,
 
-    pub grpc_listen_port: u16,
+    pub network_port: u16,
+
+    pub kms_port: u16,
+
+    pub node_address: String,
 }
 
-impl Consensus {
+impl ConsensusOverlord {
     pub fn new(
-        network_port: u16,
         controller_port: u16,
-        node_addr: String,
-        grpc_listen_port: u16,
+        consensus_port: u16,
+        network_port: u16,
+        kms_port: u16,
+        node_address: String,
     ) -> Self {
         Self {
-            network_port,
             controller_port,
-            node_addr,
-            grpc_listen_port,
+            consensus_port,
+            network_port,
+            kms_port,
+            node_address,
         }
     }
 }
 
-impl YmlWriter for Consensus {
+impl YmlWriter for ConsensusOverlord {
     fn service(&self) -> String {
         CONSENSUS.to_string()
     }
 }
 
-impl TomlWriter for Consensus {
+impl TomlWriter for ConsensusOverlord {
     fn section(&self) -> String {
-        CONSENSUS_RAFT.to_string()
+        CONSENSUS_OVERLORD.to_string()
     }
 }

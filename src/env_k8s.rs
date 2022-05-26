@@ -26,9 +26,10 @@ use crate::init_node::{execute_init_node, InitNodeOpts};
 use crate::new_account::{execute_new_account, NewAccountOpts};
 use crate::set_admin::{execute_set_admin, SetAdminOpts};
 use crate::set_nodelist::{execute_set_nodelist, SetNodeListOpts};
+use crate::set_stage::{execute_set_stage, SetStageOpts};
 use crate::sign_csr::{execute_sign_csr, SignCSROpts};
 use crate::update_node::{execute_update_node, UpdateNodeOpts};
-use crate::util::{find_micro_service, read_chain_config};
+use crate::util::{find_micro_service, rand_string, read_chain_config};
 use clap::Parser;
 
 /// A subcommand for run
@@ -62,13 +63,13 @@ pub struct CreateK8sOpts {
     #[clap(long = "block_limit", default_value = "100")]
     pub(crate) block_limit: u64,
     /// set network micro service image name (network_tls/network_p2p)
-    #[clap(long = "network_image", default_value = "network_p2p")]
+    #[clap(long = "network_image", default_value = "network_tls")]
     pub(crate) network_image: String,
     /// set network micro service image tag
     #[clap(long = "network_tag", default_value = "latest")]
     pub(crate) network_tag: String,
-    /// set consensus micro service image name (consensus_bft/consensus_raft)
-    #[clap(long = "consensus_image", default_value = "consensus_raft")]
+    /// set consensus micro service image name (consensus_bft/consensus_raft/consensus_overlord)
+    #[clap(long = "consensus_image", default_value = "consensus_bft")]
     pub(crate) consensus_image: String,
     /// set consensus micro service image tag
     #[clap(long = "consensus_tag", default_value = "latest")]
@@ -106,7 +107,8 @@ pub struct CreateK8sOpts {
     #[clap(long = "kms-password-list")]
     pub(crate) kms_password_list: String,
 
-    /// node list looks like localhost:40000:node0,localhost:40001:node1
+    /// node list looks like localhost:40000:node0:k8s_cluster1:40000,localhost:40001:node1:k8s_cluster2:40000
+    /// last slice is optional, none means not k8s env.
     #[clap(long = "nodelist")]
     pub(crate) node_list: String,
 
@@ -139,7 +141,7 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
         block_interval: opts.block_interval,
         block_limit: opts.block_limit,
         network_image: opts.network_image.clone(),
-        network_tag: opts.network_image.clone(),
+        network_tag: opts.network_tag.clone(),
         consensus_image: opts.consensus_image.clone(),
         consensus_tag: opts.consensus_tag.clone(),
         executor_image: opts.executor_image.clone(),
@@ -168,10 +170,16 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
         .iter()
         .map(|node| {
             let node_network_info: Vec<&str> = node.split(':').collect();
+            let cluster = if node_network_info.len() == 3 {
+                rand_string()
+            } else {
+                node_network_info[3].to_string()
+            };
             NodeNetworkAddressBuilder::new()
                 .host(node_network_info[0].to_string())
                 .port(node_network_info[1].parse::<u16>().unwrap())
                 .domain(node_network_info[2].to_string())
+                .cluster(cluster)
                 .build()
         })
         .collect();
@@ -183,7 +191,7 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
     // gen validator addr and append validator
     let mut node_accounts = Vec::new();
     for kms_password in kms_password_list.iter() {
-        let (key_id, addr) = execute_new_account(NewAccountOpts {
+        let (key_id, addr, validator_addr) = execute_new_account(NewAccountOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
             kms_password: kms_password.to_string(),
@@ -192,7 +200,7 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
         execute_append_validator(AppendValidatorOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
-            validator: addr.clone(),
+            validator: validator_addr.clone(),
         })
         .unwrap();
         node_accounts.push((key_id, addr));
@@ -233,8 +241,23 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
         }
     }
 
+    execute_set_stage(SetStageOpts {
+        chain_name: opts.chain_name.clone(),
+        config_dir: opts.config_dir.clone(),
+        stage: "finalize".to_string(),
+    })
+    .unwrap();
+
+    // reload chainconfig
+    let chain_config_file = format!(
+        "{}/{}/{}",
+        &opts.config_dir, &opts.chain_name, CHAIN_CONFIG_FILE
+    );
+
+    let chain_config = read_chain_config(&chain_config_file).unwrap();
+
     // init node and update node
-    for (i, node) in node_list.iter().enumerate() {
+    for (i, node) in chain_config.node_network_address_list.iter().enumerate() {
         let network_port = 50000;
         let domain = node.domain.to_string();
         let network_listen_port = 40000;
@@ -266,6 +289,7 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
             domain: domain.clone(),
             is_stdout: true,
             config_name: "config.toml".to_string(),
+            is_old: false,
         })
         .unwrap();
     }
@@ -287,7 +311,8 @@ pub struct AppendK8sOpts {
     /// kms db password
     #[clap(long = "kms-password")]
     pub(crate) kms_password: String,
-    /// node network address looks like localhost:40002:node2
+    /// node network address looks like localhost:40002:node2:k8s_cluster1
+    /// last slice is optional, none means not k8s env.
     #[clap(long = "node")]
     pub(crate) node: String,
 }
@@ -302,7 +327,7 @@ pub fn execute_append_k8s(opts: AppendK8sOpts) -> Result<(), Error> {
     let is_tls = find_micro_service(&chain_config, NETWORK_TLS);
 
     // create account for new node
-    let (key_id, addr) = execute_new_account(NewAccountOpts {
+    let (key_id, addr, _) = execute_new_account(NewAccountOpts {
         chain_name: opts.chain_name.clone(),
         config_dir: opts.config_dir.clone(),
         kms_password: opts.kms_password.clone(),
@@ -311,10 +336,17 @@ pub fn execute_append_k8s(opts: AppendK8sOpts) -> Result<(), Error> {
 
     // parse node network info
     let node_network_info: Vec<&str> = opts.node.split(':').collect();
+    let cluster = if node_network_info.len() == 3 {
+        rand_string()
+    } else {
+        node_network_info[3].to_string()
+    };
+
     let new_node = NodeNetworkAddressBuilder::new()
         .host(node_network_info[0].to_string())
         .port(node_network_info[1].parse::<u16>().unwrap())
         .domain(node_network_info[2].to_string())
+        .cluster(cluster)
         .build();
 
     // append node
@@ -351,9 +383,10 @@ pub fn execute_append_k8s(opts: AppendK8sOpts) -> Result<(), Error> {
         execute_update_node(UpdateNodeOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
-            domain,
+            domain: domain.clone(),
             is_stdout: true,
             config_name: "config.toml".to_string(),
+            is_old: true,
         })
         .unwrap();
     }
@@ -384,10 +417,11 @@ pub fn execute_append_k8s(opts: AppendK8sOpts) -> Result<(), Error> {
 
     execute_update_node(UpdateNodeOpts {
         chain_name: opts.chain_name.clone(),
-        config_dir: opts.config_dir,
+        config_dir: opts.config_dir.clone(),
         domain,
         is_stdout: true,
         config_name: "config.toml".to_string(),
+        is_old: false,
     })
     .unwrap();
 
@@ -432,12 +466,100 @@ pub fn execute_delete_k8s(opts: DeleteK8sOpts) -> Result<(), Error> {
         execute_update_node(UpdateNodeOpts {
             chain_name: opts.chain_name.clone(),
             config_dir: opts.config_dir.clone(),
-            domain,
+            domain: domain.clone(),
             is_stdout: true,
             config_name: "config.toml".to_string(),
+            is_old: true,
         })
         .unwrap();
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod k8s_test {
+    use super::*;
+    use crate::util::rand_string;
+
+    #[test]
+    fn k8s_test() {
+        let name = rand_string();
+        let name1 = rand_string();
+        execute_create_k8s(CreateK8sOpts {
+            chain_name: name.clone(),
+            config_dir: "/tmp".to_string(),
+            timestamp: 0,
+            prevhash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            version: 0,
+            chain_id: "".to_string(),
+            block_interval: 3,
+            block_limit: 100,
+            network_image: "network_tls".to_string(),
+            network_tag: "latest".to_string(),
+            consensus_image: "consensus_bft".to_string(),
+            consensus_tag: "latest".to_string(),
+            executor_image: "executor_evm".to_string(),
+            executor_tag: "latest".to_string(),
+            storage_image: "storage_rocksdb".to_string(),
+            storage_tag: "latest".to_string(),
+            controller_image: "controller".to_string(),
+            controller_tag: "latest".to_string(),
+            kms_image: "kms_sm".to_string(),
+            kms_tag: "latest".to_string(),
+            admin: "a81a6d5ebf5bb612dd52b37f743d2eb7a90807f7".to_string(),
+            kms_password_list: "123,123".to_string(),
+            node_list: "localhost:40000:node0:k8s:40000,localhost:40001:node1:k8s:40000"
+                .to_string(),
+            log_level: "info".to_string(),
+        })
+        .unwrap();
+
+        execute_create_k8s(CreateK8sOpts {
+            chain_name: name1,
+            config_dir: "/tmp".to_string(),
+            timestamp: 0,
+            prevhash: "0x0000000000000000000000000000000000000000000000000000000000000000"
+                .to_string(),
+            version: 0,
+            chain_id: "".to_string(),
+            block_interval: 3,
+            block_limit: 100,
+            network_image: "network_p2p".to_string(),
+            network_tag: "latest".to_string(),
+            consensus_image: "consensus_raft".to_string(),
+            consensus_tag: "latest".to_string(),
+            executor_image: "executor_evm".to_string(),
+            executor_tag: "latest".to_string(),
+            storage_image: "storage_rocksdb".to_string(),
+            storage_tag: "latest".to_string(),
+            controller_image: "controller".to_string(),
+            controller_tag: "latest".to_string(),
+            kms_image: "kms_eth".to_string(),
+            kms_tag: "latest".to_string(),
+            admin: "a81a6d5ebf5bb612dd52b37f743d2eb7a90807f7".to_string(),
+            kms_password_list: "123,123".to_string(),
+            node_list: "localhost:40000:node0:k8s:40000,localhost:40001:node1:k8s:40000"
+                .to_string(),
+            log_level: "info".to_string(),
+        })
+        .unwrap();
+
+        execute_append_k8s(AppendK8sOpts {
+            chain_name: name.clone(),
+            config_dir: "/tmp".to_string(),
+            log_level: "info".to_string(),
+            kms_password: "123".to_string(),
+            node: "localhost:40002:node2:k8s:40000".to_string(),
+        })
+        .unwrap();
+
+        execute_delete_k8s(DeleteK8sOpts {
+            chain_name: name,
+            config_dir: "/tmp".to_string(),
+            domain: "node2".to_string(),
+        })
+        .unwrap();
+    }
 }

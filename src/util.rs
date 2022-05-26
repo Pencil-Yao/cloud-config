@@ -16,13 +16,15 @@ use crate::config::chain_config::ChainConfig;
 use crate::config::node_config::NodeConfig;
 use crate::constant::KMS_DB;
 use crate::traits::Kms;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, CertificateSigningRequest, IsCa, KeyPair,
     PKCS_ECDSA_P256_SHA256,
 };
 use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fs, path};
+use std::{fs, io, path};
 use toml::de::Error;
 use toml::Value;
 
@@ -105,7 +107,7 @@ pub fn sm3_hash(input: &[u8]) -> [u8; HASH_BYTES_LEN] {
     libsm::sm3::hash::Sm3Hash::new(input).get_hash()
 }
 
-pub fn key_pair_option(node_dir: String, kms_password: String, is_eth: bool) -> (u64, Vec<u8>) {
+pub fn key_pair_option(node_dir: &str, kms_password: String, is_eth: bool) -> (u64, Vec<u8>) {
     if is_eth {
         crate::config::kms_eth::KmsEth::create_kms_db(
             format!("{}/{}", node_dir, KMS_DB),
@@ -176,8 +178,34 @@ pub fn remove_0x(s: &str) -> &str {
 
 pub fn check_address(s: &str) -> &str {
     let addr = s.strip_prefix("0x").unwrap_or(s);
-    if addr.len() != 40 {
+    if addr.len() != 40 && addr.len() != 96 {
         panic!("wrong address, please check!")
     };
     addr
+}
+
+pub fn copy_dir_all(src: impl AsRef<path::Path>, dst: impl AsRef<path::Path>) -> io::Result<()> {
+    let _ = fs::create_dir_all(&dst);
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn rand_string() -> String {
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect()
+}
+
+pub fn svc_name(chain_name: &str, domain: &str) -> String {
+    format!("{}-{}-nodeport", chain_name, domain)
 }

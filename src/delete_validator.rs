@@ -15,12 +15,12 @@
 use crate::config::chain_config::ConfigStage;
 use crate::constant::CHAIN_CONFIG_FILE;
 use crate::error::Error;
-use crate::util::{check_address, read_chain_config, write_toml};
+use crate::util::{read_chain_config, write_toml};
 use clap::Parser;
 
 /// A subcommand for run
 #[derive(Parser, Debug, Clone)]
-pub struct AppendValidatorOpts {
+pub struct DeleteValidatorOpts {
     /// set chain name
     #[clap(long = "chain-name", default_value = "test-chain")]
     pub(crate) chain_name: String,
@@ -32,8 +32,8 @@ pub struct AppendValidatorOpts {
     pub(crate) validator: String,
 }
 
-/// execute append validator
-pub fn execute_append_validator(opts: AppendValidatorOpts) -> Result<(), Error> {
+/// execute delete validator
+pub fn execute_delete_validator(opts: DeleteValidatorOpts) -> Result<(), Error> {
     // load chain_config
     let file_name = format!(
         "{}/{}/{}",
@@ -47,7 +47,12 @@ pub fn execute_append_validator(opts: AppendValidatorOpts) -> Result<(), Error> 
 
     let mut validators = chain_config.system_config.validators.clone();
 
-    validators.push(check_address(&opts.validator[..]).to_string());
+    match validators.binary_search_by(|validator| validator.cmp(&opts.validator)) {
+        Ok(index) => {
+            validators.remove(index);
+        }
+        Err(_) => panic!("Can't found validator that want to delete!"),
+    }
 
     chain_config.set_validators(validators);
 
