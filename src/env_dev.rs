@@ -186,7 +186,7 @@ pub fn execute_create_dev(opts: CreateDevOpts) -> Result<(), Error> {
             key_id: node.0,
             log_level: opts.log_level.clone(),
             account: node.1,
-            package_limit: 30000,
+            quota_limit: 30000000,
         })
         .unwrap();
 
@@ -298,7 +298,7 @@ pub fn execute_append_dev(opts: AppendDevOpts) -> Result<(), Error> {
         key_id,
         log_level: opts.log_level.clone(),
         account: addr,
-        package_limit: 30000,
+        quota_limit: 30000000,
     })
     .unwrap();
 
@@ -373,7 +373,7 @@ mod dev_test {
         let name1 = rand_string();
         execute_create_dev(CreateDevOpts {
             chain_name: name.clone(),
-            config_dir: "/tmp".to_string(),
+            config_dir: ".tmp".to_string(),
             peers_count: 2,
             log_level: "info".to_string(),
             is_tls: false,
@@ -384,7 +384,7 @@ mod dev_test {
 
         execute_create_dev(CreateDevOpts {
             chain_name: name1,
-            config_dir: "/tmp".to_string(),
+            config_dir: ".tmp".to_string(),
             peers_count: 2,
             log_level: "info".to_string(),
             is_tls: true,
@@ -395,14 +395,14 @@ mod dev_test {
 
         execute_append_dev(AppendDevOpts {
             chain_name: name.clone(),
-            config_dir: "/tmp".to_string(),
+            config_dir: ".tmp".to_string(),
             log_level: "info".to_string(),
         })
         .unwrap();
 
         execute_delete_dev(DeleteDevOpts {
             chain_name: name,
-            config_dir: "/tmp".to_string(),
+            config_dir: ".tmp".to_string(),
         })
         .unwrap();
     }

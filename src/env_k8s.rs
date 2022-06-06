@@ -279,7 +279,7 @@ pub fn execute_create_k8s(opts: CreateK8sOpts) -> Result<(), Error> {
             key_id: node_account.0,
             log_level: opts.log_level.clone(),
             account: node_account.1,
-            package_limit: 30000,
+            quota_limit: 30000000,
         })
         .unwrap();
 
@@ -411,7 +411,7 @@ pub fn execute_append_k8s(opts: AppendK8sOpts) -> Result<(), Error> {
         key_id,
         log_level: opts.log_level.clone(),
         account: addr,
-        package_limit: 30000,
+        quota_limit: 30000000,
     })
     .unwrap();
 
